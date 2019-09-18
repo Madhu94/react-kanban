@@ -1,40 +1,82 @@
-import React, { useContext } from "react";
+import React from "react";
 import ReactDOM from "react-dom";
 import { useDrag, useDrop, DndProvider } from "react-dnd";
 import Html5Backend from "react-dnd-html5-backend";
+import {connect, Provider} from "react-redux";
+import {createStore} from "redux";
 
 import "./styles.css";
 
 const ItemTypes = {
-  TASK: "task"
+  TASK: 'task'
 };
 
 const BoardActions = {
-  ADD: "add",
-  REMOVE: "move"
+  ADD: 'add',
+  REMOVE: 'remove'
 };
+
+const initState = {
+  boards: [
+    {name: 'TODO', tasks: ['Add a task...', 'Learn Forms', 'Learn JS', 'Learn more']},
+    {name: 'DONE', tasks: []}
+  ]
+}
+
+function addTask(state, action) {
+  const {to, task} = action.payload;
+  const boards = state.boards.map((board) => {
+    if (board.name === to) {
+      const position = action.payload.position || board.tasks.length;
+      const tasks = [...board.tasks.slice(0, position), task, ...board.tasks.slice(position)];
+      return {...board, tasks};
+    }
+    return board;
+  });
+  return {...state, boards};
+}
+
+function removeTask(state, action) {
+  const {from, task} = action.payload;
+  const boards = state.boards.map((board) => {
+    if (board.name === from) {
+      return {...board, tasks: board.tasks.filter((taskname) => task !== taskname)};
+    }
+    return board;
+  });
+  return {...state, boards};
+}
+
+function createAddTask(board, task) {
+  return {type: BoardActions.ADD, payload: {to: board, task}};
+}
+
+function createRemoveTask(board, task) {
+  return {
+    type: BoardActions.REMOVE,
+    payload: {from: board, task}
+  };
+}
+
+function rootReducer(state, action) {
+  switch(action.type) {
+    case BoardActions.ADD:
+      return addTask(state, action);
+    case BoardActions.REMOVE:
+      return removeTask(state, action);
+    default:
+      return state;
+  }
+}
 
 function Panel(props) {
   const [, drop] = useDrop({
     accept: ItemTypes.TASK,
     drop: item => {
-      updateBoards({
-        type: BoardActions.ADD,
-        payload: { taskname: item.name, to: props.title }
-      });
+      props.addTask(props.title, item.name);
     },
-    collect: (monitor, props) => {
-      return props;
-    }
   });
-  const children = props.tasks.map(task => {
-    if (typeof task === "string") {
-      return <Task taskname={task} />;
-    } else if (task.type === "placeholder") {
-      return <PlaceholderTask />;
-    }
-    return null;
-  });
+  const children = props.tasks.map(task => <Task taskname={task} removeTask={(taskname) => props.removeTask(props.title, taskname)} />);
   return (
     <div
       className="board"
@@ -49,18 +91,23 @@ function Panel(props) {
 
 function Task(props) {
   const [, drag] = useDrag({
-    item: { type: ItemTypes.TASK, name: props.taskname }
+    item: { type: ItemTypes.TASK, name: props.taskname },
+    end: (item, monitor) => {
+      if (monitor.didDrop()) {
+        props.removeTask(item.name);
+      }
+    }
   });
   const [, drop] = useDrop({
     accept: ItemTypes.TASK,
-    hover: (item, monitor) => {
+    /*hover: (item, monitor) => {
       if (item.name === props.taskname) {
         return;
       }
       if (item.type === ItemTypes.TASK) {
-        addPlaceHolderBeforeBoard(props.taskname);
+        this.props.addHover(props.taskname);
       }
-    }
+    }*/
   });
   const combinedRef = ref => {
     drag(ref);
@@ -70,10 +117,11 @@ function Task(props) {
     <div
       ref={combinedRef}
       style={{
-        backgroundColor: "yellow",
-        margin: "5px",
-        padding: "20px",
-        height: "10px"
+        backgroundColor: 'yellow',
+        margin: '5px',
+        padding: '20px',
+        height: '10px',
+        border: props.taskname === 'placeholder' ? 'dashed black 0.2px': 'solid black 0.1px'
       }}
       className="task"
     >
@@ -82,39 +130,10 @@ function Task(props) {
   );
 }
 
-function PlaceholderTask(props) {
-  return (
-    <div
-      style={{
-        backgroundColor: "yellow",
-        border: "dashed black 0.2px",
-        margin: "5px",
-        padding: "20px",
-        height: "10px"
-      }}
-    />
-  );
-}
-
-const TaskContext = React.createContext({ boards: [] });
-let boards = [
-  {
-    name: "Todo",
-    tasks: [
-      "Learn HTML",
-      "Learn SQL",
-      "Learn Auth",
-      "Learn JS",
-      "Something else"
-    ]
-  },
-  { name: "Done", tasks: [] }
-];
-
-function App() {
-  const { boards: bds } = useContext(TaskContext);
-  const panels = bds.map(({ name, tasks = [] }) => {
-    return <Panel title={name} tasks={tasks} />;
+function Kanban(props) {
+  const { boards } = props;
+  const panels = boards.map(({ name, tasks = [] }) => {
+    return <ConnectedPanel title={name} tasks={tasks} />;
   });
   return (
     <DndProvider backend={Html5Backend}>
@@ -123,70 +142,27 @@ function App() {
   );
 }
 
-function addPlaceHolderBeforeBoard(taskname) {
-  const board = boards.find(({ tasks }) => {
-    return tasks.includes(taskname);
-  });
-  board.tasks = board.tasks.filter(task => {
-    return !(task.type && task.type === "placeholder");
-  });
-  const index = board.tasks.findIndex(task => task === taskname);
-  board.tasks.splice(index, 0, { name: "placeholder", type: "placeholder" });
-  render();
+const mapStateToProps = (state) => {
+  return {
+    boards: state.boards
+  }
 }
 
-function updateBoards(boardAction) {
-  // a weird precursor to using redux
-  // We have only one action now - 'MOVE'
-  if (boardAction.type === BoardActions.ADD) {
-    const { to, taskname } = boardAction.payload;
-    const theBoard = boards.find(({ tasks }) => tasks.includes(taskname));
-    if (theBoard.name === to) {
-      return;
-    }
-    boards = boards.map(board => {
-      if (board.name === to) {
-        const taskIndex = board.tasks.findIndex(
-          task => task.type && task.type === "placeholder"
-        );
-        let tasks = board.tasks.slice();
-        if (taskIndex !== -1) {
-          tasks.splice(taskIndex, 1, taskname);
-        } else {
-          tasks = [...tasks, taskname];
-        }
-        return { ...board, tasks };
-      }
-      return {
-        ...board,
-        tasks: board.tasks.filter(task => {
-          return task !== taskname;
-        })
-      };
-    });
-  }
-
-  if (boardAction.type === BoardActions.REMOVE) {
-    const { from, taskname } = boardAction.payload;
-    boards = boards.map(board => {
-      if (board.name === from) {
-        const tasks = board.tasks.filter(task => {
-          return task !== taskname;
-        });
-        return { ...board, tasks };
-      }
-      return board;
-    });
-  }
-  render();
+const mapDispatchToProps = (dispatch) => {
+  return {
+    addTask: (boardname, taskname) => dispatch(createAddTask(boardname, taskname)),
+    removeTask: (boardname, taskname) => dispatch(createRemoveTask(boardname, taskname))
+  };
 }
+
+const ConnectedPanel = connect(null, mapDispatchToProps)(Panel);
+const ConnectedKanban = connect(mapStateToProps)(Kanban);
+const store = createStore(rootReducer, initState);
 
 function render() {
   const rootElement = document.getElementById("root");
   ReactDOM.render(
-    <TaskContext.Provider value={{ boards, updateBoards }}>
-      <App />
-    </TaskContext.Provider>,
+    <Provider store={store}><ConnectedKanban /></Provider>,
     rootElement
   );
 }
